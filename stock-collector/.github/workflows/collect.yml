@@ -1,0 +1,77 @@
+name: Collect All Stocks (merged per-symbol packs)
+
+on:
+  schedule:
+    # 工作日收盘后（冬令时 16:10 ET = 21:10 UTC）
+    - cron: "10 21 * * 1-5"
+    # 每周六全量兜底补齐
+    - cron: "10 3 * * 6"
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "单只调试（留空=全市场）"
+        required: false
+        default: ""
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  universe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r requirements.txt
+      - name: Build universe
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          R2_ENABLE: ${{ vars.R2_ENABLE || '0' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python collector/fetch_universe.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbols
+          path: SYMBOLS_ALL.txt
+
+  collect:
+    needs: universe
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+      max-parallel: 20
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with: { name: symbols }
+      - name: Collect shard ${{ matrix.shard }} (EDGAR + Yahoo 合并包)
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          R2_ENABLE: ${{ vars.R2_ENABLE || '0' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python collector/collect_symbol.py ${{ matrix.shard }} 20 ${{ github.event.inputs.symbol }}
+      - name: Upload failure list
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-${{ matrix.shard }}
+          path: failed_${{ matrix.shard }}.txt
+          if-no-files-found: ignore

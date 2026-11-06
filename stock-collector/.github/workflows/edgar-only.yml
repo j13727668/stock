@@ -1,0 +1,51 @@
+name: EDGAR Only (补齐用)
+
+# 用途：雅虎已完成，只补 EDGAR 数据。10 分片并行，每片约 1650 只，20~40 分钟。
+# 手动触发即可，不会自动定时，避免和主采集撞车。
+
+on:
+  workflow_dispatch:
+    inputs:
+      shard:
+        description: "只跑某个分片（0-9，留空=全部）"
+        required: false
+        default: ""
+
+jobs:
+  edgar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180          # 关键：给足时间，避免半路被杀
+    strategy:
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      max-parallel: 10
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r requirements.txt
+
+      # 生成 EDGAR 全量代码清单（不传 meta，避免覆盖线上 universe）
+      - name: Build symbol list
+        run: python collector/build_edgar_symbols.py
+
+      - name: EDGAR shard ${{ matrix.shard }}
+        if: ${{ github.event.inputs.shard == '' || github.event.inputs.shard == matrix.shard }}
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          R2_ENABLE: ${{ vars.R2_ENABLE || '0' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python collector/collect_edgar.py ${{ matrix.shard }} 10
+
+      - name: Upload failure list
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-edgar-${{ matrix.shard }}
+          path: failed_edgar_${{ matrix.shard }}.txt
+          if-no-files-found: ignore

@@ -1,0 +1,6 @@
+# 核心池：每行一个代码，# 开头为注释
+# 建议放 500 只以内（GitHub Actions 单次 30 分钟够跑 500 只）
+AAPL
+TSLA
+MSFT
+NVDA
