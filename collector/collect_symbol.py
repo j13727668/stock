@@ -82,7 +82,7 @@ def save_local(sym, bundle):
     full = os.path.join(d, f"{sym}.json")
     tmp = full + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(bundle, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(bundle, f, ensure_ascii=False, separators=(",", ":"), default=str)
     os.replace(tmp, full)
     return full
 
@@ -122,9 +122,9 @@ def main():
     ok, failed = 0, []
     for i, sym in enumerate(symbols, 1):
         try:
-            bundle = collect_one(sym, cik_map)
+            bundle = yh._clean(collect_one(sym, cik_map))   # 整体清洗（Timestamp/NaN/numpy）
             body = json.dumps(bundle, ensure_ascii=False,
-                              separators=(",", ":")).encode()
+                              separators=(",", ":"), default=str).encode()
             save_local(sym, bundle)                     # 始终落本地（便于打包归档）
             if not local_only:
                 up.put(f"stocks/{sym}.json", body)      # 1 只 1 次 PUT
