@@ -118,6 +118,19 @@ def main():
             log(f"上传层未配置，转本地模式: {e}")
             local_only = True
 
+    # ---- 断点续采：RESUME=1 时向接收端要已采集清单，跳过已有的 ----
+    if os.environ.get("RESUME") == "1" and not local_only and up is not None:
+        try:
+            import requests
+            base = up.ingest_url.split(",")[0].strip()
+            r = requests.get(base, params={"action": "list"}, timeout=60)
+            have = set(r.json().get("symbols", []))
+            before = len(symbols)
+            symbols = [s for s in symbols if s not in have]
+            log(f"续采模式：接收端已有 {len(have)} 只，本片 {before} -> 待采 {len(symbols)}")
+        except Exception as e:  # noqa: BLE001
+            log(f"续采清单获取失败，按全量跑: {e}")
+
     log(f"分片 {shard}/{total}，本片 {len(symbols)} 只，模式={'本地' if local_only else '上传'}")
     ok, failed = 0, []
     for i, sym in enumerate(symbols, 1):
