@@ -29,8 +29,9 @@ import math
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -47,20 +48,54 @@ FAIL_DIR_NAME = "failed"
 
 # ==================== 工具 ====================
 def _clean(obj):
-    """NaN/Inf -> None，保证 JSON 合法"""
+    """把 pandas / numpy 类型转成 JSON 安全类型（否则 json.dumps 会抛
+    'Object of type Timestamp is not JSON serializable'）
+
+    规则：
+      pd.Timestamp / datetime -> "YYYY-MM-DD HH:MM:SS"；零点整则只留 "YYYY-MM-DD"
+      datetime.date          -> "YYYY-MM-DD"
+      numpy int/float/bool   -> 对应 python 原生类型
+      NaN / Inf / NaT / NA   -> None
+    """
+    # ---- 空值优先（pd.NaT 也是 datetime 子类，必须先拦）----
+    if obj is None or obj is pd.NaT or obj is pd.NA:
+        return None
+    # ---- 时间类 ----
+    if isinstance(obj, (pd.Timestamp, datetime)):
+        s = obj.strftime("%Y-%m-%d %H:%M:%S")
+        return s[:10] if s.endswith(" 00:00:00") else s
+    if isinstance(obj, date):
+        return obj.strftime("%Y-%m-%d")
+    # ---- numpy 标量 ----
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        f = float(obj)
+        return None if (math.isnan(f) or math.isinf(f)) else round(f, 6)
+    if isinstance(obj, np.ndarray):
+        return [_clean(v) for v in obj.tolist()]
+    # ---- python 原生 ----
     if isinstance(obj, float):
         return None if (math.isnan(obj) or math.isinf(obj)) else round(obj, 6)
     if isinstance(obj, dict):
-        return {k: _clean(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+        return {(_clean(k) if not isinstance(k, str) else k): _clean(v)
+                for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
         return [_clean(v) for v in obj]
+    # 其它未知类型（Decimal 等）交给 json 的 default=str 兜底
     return obj
 
 
 def _df_to_records(df):
     if df is None or df.empty:
         return []
-    return _clean(df.reset_index().to_dict(orient="records"))
+    d = df.reset_index()
+    # 索引统一命名为 Date（日K原为 Date，1 分线原为 Datetime，缺省为 index）
+    if d.columns[0] in ("index", "level_0", "Datetime", "date"):
+        d = d.rename(columns={d.columns[0]: "Date"})
+    return _clean(d.to_dict(orient="records"))
 
 
 def log(msg):
@@ -219,7 +254,7 @@ def main():
     for i, sym in enumerate(symbols, 1):
         try:
             bundle = collect_symbol(sym)
-            body = json.dumps(_clean(bundle), ensure_ascii=False,
+            body = json.dumps(_clean(bundle), ensure_ascii=False, default=str,
                               separators=(",", ":")).encode("utf-8")
             up.put(f"stocks/{sym}/bundle.json", body)
             ok += 1
