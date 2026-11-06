@@ -21,6 +21,8 @@ import time
 
 import requests
 
+log = print  # 简单日志；Actions 里直接打到 stdout
+
 _session = requests.Session()
 _session.proxies.update({"http": None, "https": None})
 
@@ -43,12 +45,30 @@ class Uploader:
             raise RuntimeError("未配置上传目标：请设置 INGEST_URL 或 R2_ENABLE=1")
 
     def put(self, path, body: bytes, retries=3):
-        """path 如 stocks/AAPL/edgar.json；body 为 JSON bytes"""
+        """path 如 stocks/AAPL/edgar.json；body 为 JSON bytes
+        INGEST_URL 支持多域名逗号分隔（主备故障切换，按顺序尝试）"""
+        urls = [u.strip() for u in self.ingest_url.split(",") if u.strip()] \
+            if self.ingest_url else []
+        active = getattr(self, "_active", None)
+        if active in urls:
+            urls = [active] + [u for u in urls if u != active]
         last = None
         for i in range(retries):
             try:
-                if self.ingest_url:
-                    self._post(self.ingest_url, path, body)
+                for url in urls:
+                    try:
+                        self._post(url, path, body)
+                        if len(urls) > 1:
+                            self._active = url      # 记住成功的域名，后续优先用
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        last = e
+                        log(f"  {url} 上传失败，尝试下一个: {e}")
+                else:
+                    if not urls:                    # 没配服务器，纯 R2 模式
+                        pass
+                    else:
+                        raise RuntimeError(f"所有域名均失败: {last}")
                 if self.r2:
                     self.r2.put_object(Bucket=self.bucket, Key=path, Body=body,
                                        ContentType="application/json",
