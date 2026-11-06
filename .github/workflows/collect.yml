@@ -12,6 +12,11 @@ on:
         description: "单只调试（留空=全市场）"
         required: false
         default: ""
+      resume:
+        description: "断点续采（跳过接收端已有的股票，只补缺的）"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: collect
@@ -62,6 +67,7 @@ jobs:
         env:
           INGEST_URL: ${{ secrets.INGEST_URL }}
           INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          RESUME: ${{ inputs.resume && '1' || '0' }}
           R2_ENABLE: ${{ vars.R2_ENABLE || '0' }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
